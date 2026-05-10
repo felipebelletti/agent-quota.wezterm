@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="190" viewBox="0 0 1280 190" role="img" aria-labelledby="title desc">
+  <title id="title">Agent Quota WezTerm status bar sample</title>
+  <desc id="desc">A terminal status bar showing Claude and Codex quota percentages, reset countdowns, and compact usage bars.</desc>
+  <rect width="1280" height="190" fill="#111827"/>
+  <rect x="48" y="44" width="1184" height="102" rx="8" fill="#1f2937" stroke="#374151"/>
+  <text x="78" y="108" fill="#565f89" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="28">⚡</text>
+  <text x="122" y="108" fill="#c0caf5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="28">Claude:</text>
+  <text x="255" y="108" fill="#c0caf5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="28">5h</text>
+  <text x="312" y="108" fill="#9ece6a" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="28">███</text>
+  <text x="378" y="108" fill="#565f89" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="28">░░░░░</text>
+  <text x="500" y="108" fill="#9ece6a" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="28">42%</text>
+  <text x="566" y="108" fill="#565f89" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="28">(2h31m)</text>
+  <text x="704" y="108" fill="#565f89" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="28">|</text>
+  <text x="746" y="108" fill="#565f89" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="28">✦</text>
+  <text x="790" y="108" fill="#c0caf5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="28">Codex:</text>
+  <text x="910" y="108" fill="#c0caf5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="28">5h</text>
+  <text x="967" y="108" fill="#f7768e" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="28">███████</text>
+  <text x="1116" y="108" fill="#565f89" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="28">░</text>
+  <text x="1154" y="108" fill="#f7768e" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="28">88%</text>
+</svg>

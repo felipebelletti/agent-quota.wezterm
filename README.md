@@ -6,12 +6,14 @@ A WezTerm plugin that shows Claude and Codex quota usage directly in the status 
 
 It displays live 5-hour and 7-day usage windows, reset countdowns, process-aware `not running` states, compact percentage bars, and a shared cache so multiple WezTerm windows do not all refresh the same data independently.
 
+![Agent Quota status bar sample](assets/status-sample.svg)
+
 ## Features
 
 - Claude 5-hour and 7-day utilization
 - Codex 5-hour and 7-day utilization
 - Reset countdowns for both providers
-- Compact 6-cell percentage bars
+- Compact 8-cell percentage bars
 - Process-aware `not running` status for Claude and Codex
 - Shared per-user cache in `/tmp` across WezTerm instances
 - Bundled Codex helper auto-discovery with no manual script-path setup
@@ -21,7 +23,7 @@ It displays live 5-hour and 7-day usage windows, reset countdowns, process-aware
 Example output:
 
 ```text
-Claude: 5h ███░░░ 42% (2h31m)  ▪ 7d █░░░░░ 18% (4d12h)  |  Codex: 5h █████░ 88% (2h10m)  ▪ 7d ██░░░░ 32% (1d4h)
+Claude: 5h ███░░░░░ 42% (2h31m)  ▪ 7d █░░░░░░░ 18% (4d12h)  |  Codex: 5h ███████░ 88% (2h10m)  ▪ 7d ███░░░░░ 32% (1d4h)
 ```
 
 ## Requirements
@@ -31,7 +33,7 @@ Tested on Linux.
 - [WezTerm](https://wezterm.org/)
 - `python3`
 - `curl`
-- `pgrep`, `mkdir`, `rmdir`, and GNU `stat`
+- `pgrep`, `ps`, `mkdir`, `rmdir`, and GNU `stat`
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated for Claude usage display
 - [OpenAI Codex CLI](https://github.com/openai/codex) installed and authenticated for Codex usage display
 
@@ -82,7 +84,7 @@ quota.apply_to_config(config, {
   },
   bars = {
     enabled = true,
-    width = 6,
+    width = 8,
     full = "█",
     empty = "░",
   },
@@ -125,7 +127,21 @@ Status display:
 
 - shows actual usage only when the corresponding tool is running
 - colors usage as green under `50%`, yellow from `50%` to `79%`, and red at `80%` and above
-- renders compact 6-cell bars by default
+- renders compact 8-cell bars by default
+
+## Compatibility
+
+- Primary target: Linux desktop sessions running WezTerm.
+- Claude credentials are read from `~/.claude/.credentials.json`.
+- Codex usage is read through `codex app-server --listen stdio://`, so the installed Codex CLI must support app-server rate-limit reads.
+- Required command-line tools are `python3`, `curl`, `pgrep`, `ps`, `mkdir`, `rmdir`, and GNU `stat`.
+
+## Known Limitations
+
+- The plugin does not refresh Claude or Codex authentication itself; it waits for the corresponding CLI to keep credentials valid.
+- Codex displays `not running` unless an interactive Codex process is attached to a terminal. Quota data may still be fetchable in the background, but the visible status remains process-aware.
+- Claude usage calls are intentionally cached and retried with backoff to avoid unnecessary API pressure.
+- macOS and Windows are not currently tested release targets.
 
 ## Troubleshooting
 
@@ -138,4 +154,4 @@ Status display:
 
 ## Credit
 
-Originally based on [wezterm-quota-limit](https://github.com/EdenGibson/wezterm-quota-limit) by EdenGibson, then extended here to support Codex, shared caching, and bundled-helper installation.
+Originally based on [wezterm-quota-limit](https://github.com/EdenGibson/wezterm-quota-limit) by EdenGibson. This fork significantly extends the original Claude-only plugin with Codex support, shared cross-window caching, process-aware status states, bundled helper discovery, compact usage bars, and additional reset/error handling.

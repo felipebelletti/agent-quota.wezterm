@@ -70,25 +70,6 @@ end
 local DIM = hex_to_fg("#565f89")
 local BRIGHT = hex_to_fg("#c0caf5")
 
--- Legacy FormatItem helpers (kept for compatibility if wezterm.format works)
-local function usage_color(pct)
-  if pct >= 80 then
-    return { Foreground = { Color = "#f7768e" } } -- red
-  elseif pct >= 50 then
-    return { Foreground = { Color = "#e0af68" } } -- yellow
-  else
-    return { Foreground = { Color = "#9ece6a" } } -- green
-  end
-end
-
-local function dim()
-  return { Foreground = { Color = "#565f89" } }
-end
-
-local function bright()
-  return { Foreground = { Color = "#c0caf5" } }
-end
-
 -- Deep merge: t2 values override t1, recurses into nested tables
 local function deep_merge(t1, t2)
   local result = {}
@@ -641,48 +622,6 @@ local function sync_codex_shared_state(entry)
   codex_last_error = entry.last_error
 end
 
-local function codex_cred_path()
-  local home = os.getenv("HOME") or ""
-  return home .. "/.codex/auth.json"
-end
-
--- Decode the JWT exp field without any network call
--- JWT payload is base64url encoded — use python3 to decode it
-local function get_codex_token_info()
-  local f = io.open(codex_cred_path(), "r")
-  if not f then return nil, nil, "no codex auth" end
-  local content = f:read("*a")
-  f:close()
-
-  local token = content:match('"access_token"%s*:%s*"([^"]+)"')
-  if not token then return nil, nil, "no access_token" end
-
-  -- Extract JWT payload (middle segment)
-  local payload_b64 = token:match("^[^.]+%.([^.]+)%.")
-  if not payload_b64 then return token, nil, nil end
-
-  -- Decode via python3 (always available on Linux)
-  local ok, stdout = wezterm.run_child_process({
-    "python3", "-c",
-    string.format(
-      "import base64,json,sys; p='%s'; p+='='*(4-len(p)%%4); d=json.loads(base64.urlsafe_b64decode(p)); print(d.get('exp',''))",
-      payload_b64
-    ),
-  })
-
-  local exp = (ok and stdout) and tonumber(stdout:match("(%d+)")) or nil
-  return token, exp, nil
-end
-
-local function format_expiry(exp)
-  if not exp then return nil end
-  local diff = exp - os.time()
-  if diff <= 0 then return "expired" end
-  if diff < 3600   then return string.format("%dm", math.floor(diff / 60)) end
-  if diff < 86400  then return string.format("%dh", math.floor(diff / 3600)) end
-  return string.format("%dd", math.floor(diff / 86400))
-end
-
 -- Path to the bundled Codex helper script
 local CODEX_SCRIPT = resolve_codex_script()
 
@@ -935,11 +874,6 @@ local function sync_claude_shared_state(entry)
   last_fetch_time = tonumber(entry.written_at) or last_fetch_time
   consecutive_errors = tonumber(entry.error_count) or 0
   last_error = entry.last_error
-end
-
--- Calculate how long to wait before next fetch (exponential backoff on errors)
-local function current_interval()
-  return interval_for_errors(consecutive_errors)
 end
 
 -- Detect Claude Code version (cached after first call)
@@ -1215,54 +1149,6 @@ local function build_status_string(data, window, pane)
   return claude_str
     .. DIM .. "  |" .. codex_str
     .. " " .. RESET
-end
-
--- Build status bar cells (legacy, for wezterm.format)
-local function build_cells(data)
-  local cells = {}
-
-  if data.error then
-    table.insert(cells, dim())
-    table.insert(cells, { Text = " " .. config.icons.bolt .. " Claude: " })
-    table.insert(cells, { Foreground = { Color = "#f7768e" } })
-    table.insert(cells, { Text = tostring(data.error) .. " " })
-    return cells
-  end
-
-  -- 5-hour window
-  local five_pct = data.five_hour and data.five_hour.utilization or 0
-  local five_reset = data.five_hour and data.five_hour.resets_at
-
-  -- 7-day window
-  local seven_pct = data.seven_day and data.seven_day.utilization or 0
-  local seven_reset = data.seven_day and data.seven_day.resets_at
-
-  -- Icon
-  table.insert(cells, dim())
-  table.insert(cells, { Text = " " .. config.icons.bolt .. " " })
-
-  -- 5h usage
-  table.insert(cells, bright())
-  table.insert(cells, { Text = "5h " })
-  table.insert(cells, usage_color(five_pct))
-  table.insert(cells, { Text = string.format("%.0f%%", five_pct) })
-  table.insert(cells, dim())
-  table.insert(cells, { Text = " (" .. time_until(five_reset) .. ")" })
-
-  -- Separator
-  table.insert(cells, dim())
-  table.insert(cells, { Text = "  " .. config.icons.week .. " " })
-
-  -- 7d usage
-  table.insert(cells, bright())
-  table.insert(cells, { Text = "7d " })
-  table.insert(cells, usage_color(seven_pct))
-  table.insert(cells, { Text = string.format("%.0f%%", seven_pct) })
-  table.insert(cells, dim())
-  table.insert(cells, { Text = " (" .. time_until(seven_reset) .. ")" })
-  table.insert(cells, { Text = " " })
-
-  return cells
 end
 
 function M.apply_to_config(c, opts)
