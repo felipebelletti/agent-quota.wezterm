@@ -2,6 +2,8 @@
 
 ![WezTerm plugin](https://img.shields.io/badge/WezTerm-plugin-blue)
 
+[Listed on Awesome WezTerm](https://github.com/michaelbrusegard/awesome-wezterm#ai)
+
 A WezTerm plugin that shows Claude and Codex quota usage directly in the status bar.
 
 It displays live 5-hour and 7-day usage windows, reset countdowns, process-aware `not running` states, compact percentage bars, and a shared cache so multiple WezTerm windows do not all refresh the same data independently.
