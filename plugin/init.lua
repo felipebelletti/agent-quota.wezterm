@@ -6,11 +6,21 @@ local M = {}
 local config = {
   poll_interval_secs = 60,
   position = "right", -- "left" or "right"
+  -- manual = true: don't register a status drawer; instead expose M.status_string()
+  -- so you can render the quota inside your own update-status handler.
+  manual = false,
   dashboard_key = { key = "u", mods = "CTRL|SHIFT" }, -- keybind to open dashboard
   icons = {
-    bolt = "⚡",
+    bolt = "⚡", -- legacy; per-provider `claude.icon` / `codex.icon` below take effect
     week = "▪",
   },
+  -- Per-provider prefix: an icon and a text label. Set either to "" to hide it.
+  -- For an icon-only prefix (no word), set label = "". Icons accept any string,
+  -- e.g. a Nerd Font glyph: claude = { icon = wezterm.nerdfonts.cod_sparkle, label = "" }
+  claude = { icon = "⚡", label = "Claude:" },
+  codex  = { icon = "✦", label = "Codex:" },
+  show_seven_day = true,        -- show the 7-day usage window (Claude + Codex secondary)
+  hide_codex_when_idle = false, -- hide the entire Codex segment when no Codex is running
   bars = {
     enabled = true,
     width = 8,
@@ -119,6 +129,23 @@ local function file_exists(path)
   return true
 end
 
+-- Find this plugin's own install directory via WezTerm's plugin registry.
+-- Works cross-platform (macOS/Linux/Windows) and even when debug.getinfo cannot
+-- resolve the chunk path (as happens for plugin-required chunks on some builds).
+local function plugin_dir_from_list()
+  local ok, plugins = pcall(function() return wezterm.plugin.list() end)
+  if not ok or type(plugins) ~= "table" then
+    return nil
+  end
+  for _, p in ipairs(plugins) do
+    if type(p) == "table" and type(p.plugin_dir) == "string"
+      and type(p.url) == "string" and p.url:find("agent%-quota") then
+      return p.plugin_dir
+    end
+  end
+  return nil
+end
+
 local function resolve_codex_script()
   local home = os.getenv("HOME") or ""
   local plugin_dir = dirname(current_file_path())
@@ -127,6 +154,12 @@ local function resolve_codex_script()
   local env_path = os.getenv("WEZTERM_AGENT_QUOTA_CODEX_HELPER")
   if env_path and env_path ~= "" then
     candidates[#candidates + 1] = env_path
+  end
+
+  -- Preferred: the plugin's own dir, resolved via the registry (no subprocess).
+  local listed_dir = plugin_dir_from_list()
+  if listed_dir then
+    candidates[#candidates + 1] = listed_dir .. "/codex-limits.py"
   end
 
   if plugin_dir then
@@ -622,8 +655,16 @@ local function sync_codex_shared_state(entry)
   codex_last_error = entry.last_error
 end
 
--- Path to the bundled Codex helper script
-local CODEX_SCRIPT = resolve_codex_script()
+-- Path to the bundled Codex helper script. Resolved lazily on first use:
+-- resolving at module-load time can spawn a subprocess (the `find` fallback),
+-- which WezTerm forbids during config load ("yield across a C-call boundary").
+local CODEX_SCRIPT = nil
+local function get_codex_script()
+  if not CODEX_SCRIPT then
+    CODEX_SCRIPT = resolve_codex_script()
+  end
+  return CODEX_SCRIPT
+end
 
 -- Format a Unix timestamp as time-until string
 local function time_until_unix(ts)
@@ -672,6 +713,7 @@ local function fetch_codex_limits()
   -- No running gate: quota is account-level and always fetchable.
   -- is_codex_running() is used only in the display layer as an activity hint.
 
+  local CODEX_SCRIPT = get_codex_script()
   if not file_exists(CODEX_SCRIPT) then
     codex_cached = { error = "missing bundled codex helper" }
     codex_errors = codex_errors + 1
@@ -807,7 +849,21 @@ local function cred_path()
   return home .. "/.claude/.credentials.json"
 end
 
--- Read credentials file
+-- Read the Claude OAuth credentials JSON from the macOS login Keychain, where
+-- Claude Code stores it on macOS (there is no ~/.claude/.credentials.json there).
+-- Read live each time so it stays valid as Claude Code rotates the token.
+local function read_credentials_keychain()
+  local ok, stdout = wezterm.run_child_process({
+    "security", "find-generic-password", "-s", "Claude Code-credentials", "-w",
+  })
+  if not ok or not stdout or stdout == "" then
+    return nil, "no credentials in keychain"
+  end
+  return (stdout:gsub("%s+$", "")), nil
+end
+
+-- Read credentials: the ~/.claude/.credentials.json file (Linux/Windows), and on
+-- macOS fall back to the login Keychain.
 local function read_credentials()
   local path = cred_path()
   local f = io.open(path, "r")
@@ -815,7 +871,7 @@ local function read_credentials()
     f = io.open(path:gsub("/", "\\"), "r")
   end
   if not f then
-    return nil, "no credentials file"
+    return read_credentials_keychain()
   end
   local content = f:read("*a")
   f:close()
@@ -1055,19 +1111,36 @@ end
 -- Dashboard URL
 local DASHBOARD_URL = "https://console.anthropic.com/settings/usage"
 
+-- Build a "<icon> <label> " prefix from a provider config table ({icon, label}).
+-- Either part may be "" to hide it; both empty yields just a leading space.
+local function provider_prefix(provider)
+  provider = provider or {}
+  local parts = {}
+  if provider.icon and provider.icon ~= "" then
+    parts[#parts + 1] = provider.icon
+  end
+  if provider.label and provider.label ~= "" then
+    parts[#parts + 1] = provider.label
+  end
+  if #parts == 0 then
+    return DIM .. " "
+  end
+  return DIM .. " " .. BRIGHT .. table.concat(parts, " ") .. " "
+end
+
 -- Build status string using raw ANSI escapes (avoids wezterm.format deserialization issues)
 local function build_status_string(data, window, pane)
   -- ── Claude ──────────────────────────────────────────────
   local claude_str
+  local claude_prefix = provider_prefix(config.claude)
   if data.not_running then
-    claude_str = DIM .. " ⚡ " .. BRIGHT .. "Claude: " .. DIM .. "not running"
+    claude_str = claude_prefix .. DIM .. "not running"
   elseif data.syncing then
-    claude_str = DIM .. " ⚡ " .. BRIGHT .. "Claude: " .. DIM .. "syncing..."
+    claude_str = claude_prefix .. DIM .. "syncing..."
   elseif is_rate_limited_error(data.error) then
-    claude_str = DIM .. " ⚡ " .. BRIGHT .. "Claude: " .. DIM .. "syncing..."
+    claude_str = claude_prefix .. DIM .. "syncing..."
   elseif data.error then
-    claude_str = DIM .. " ⚡ Claude: "
-      .. hex_to_fg("#f7768e") .. tostring(data.error)
+    claude_str = claude_prefix .. hex_to_fg("#f7768e") .. tostring(data.error)
   else
     local five_pct   = data.five_hour and data.five_hour.utilization or 0
     local five_reset = data.five_hour and data.five_hour.resets_at
@@ -1076,8 +1149,7 @@ local function build_status_string(data, window, pane)
     local five_bar   = usage_bar_esc(five_pct)
     local seven_bar  = usage_bar_esc(seven_pct)
 
-    claude_str = DIM .. " ⚡ " .. BRIGHT .. "Claude: "
-      .. BRIGHT .. "5h "
+    claude_str = claude_prefix .. BRIGHT .. "5h "
     if five_bar then
       claude_str = claude_str .. five_bar .. DIM .. " "
     end
@@ -1085,41 +1157,47 @@ local function build_status_string(data, window, pane)
       .. usage_color_esc(five_pct) .. string.format("%.0f%%", five_pct)
       .. DIM .. " (" .. time_until(five_reset) .. ")"
 
-    claude_str = claude_str .. DIM .. "  " .. config.icons.week .. " "
-      .. BRIGHT .. "7d "
-    if seven_bar then
-      claude_str = claude_str .. seven_bar .. DIM .. " "
+    if config.show_seven_day then
+      claude_str = claude_str .. DIM .. "  " .. config.icons.week .. " "
+        .. BRIGHT .. "7d "
+      if seven_bar then
+        claude_str = claude_str .. seven_bar .. DIM .. " "
+      end
+      claude_str = claude_str
+        .. usage_color_esc(seven_pct) .. string.format("%.0f%%", seven_pct)
+        .. DIM .. " (" .. time_until(seven_reset) .. ")"
     end
-    claude_str = claude_str
-      .. usage_color_esc(seven_pct) .. string.format("%.0f%%", seven_pct)
-      .. DIM .. " (" .. time_until(seven_reset) .. ")"
   end
 
   -- ── Codex ───────────────────────────────────────────────
   local codex_str
   local cd, codex_active = fetch_codex_limits()
+  local codex_prefix = provider_prefix(config.codex)
 
   if not codex_active then
-    codex_str = DIM .. " ✦ " .. BRIGHT .. "Codex: " .. DIM .. "not running"
+    if config.hide_codex_when_idle then
+      codex_str = nil
+    else
+      codex_str = codex_prefix .. DIM .. "not running"
+    end
 
   elseif cd.error == "not running" then
-    codex_str = DIM .. " ✦ " .. BRIGHT .. "Codex: " .. DIM .. "loading..."
+    codex_str = codex_prefix .. DIM .. "loading..."
   elseif cd.syncing then
-    codex_str = DIM .. " ✦ " .. BRIGHT .. "Codex: " .. DIM .. "syncing..."
+    codex_str = codex_prefix .. DIM .. "syncing..."
 
   elseif cd.ready then
-    codex_str = DIM .. " ✦ " .. BRIGHT .. "Codex: " .. hex_to_fg("#9ece6a") .. "ready"
+    codex_str = codex_prefix .. hex_to_fg("#9ece6a") .. "ready"
 
   elseif cd.error then
-    codex_str = DIM .. " ✦ Codex: " .. hex_to_fg("#f7768e") .. tostring(cd.error)
+    codex_str = codex_prefix .. hex_to_fg("#f7768e") .. tostring(cd.error)
 
   elseif cd.primary_pct ~= nil then
     -- Full usage data from app-server
     local win_label = cd.primary_mins and string.format("%dh", math.floor(cd.primary_mins / 60)) or "5h"
     local primary_bar = usage_bar_esc(cd.primary_pct)
     local secondary_bar = cd.secondary_pct ~= nil and usage_bar_esc(cd.secondary_pct) or nil
-    codex_str = DIM .. " ✦ " .. BRIGHT .. "Codex: "
-      .. BRIGHT .. win_label .. " "
+    codex_str = codex_prefix .. BRIGHT .. win_label .. " "
     if primary_bar then
       codex_str = codex_str .. primary_bar .. DIM .. " "
     end
@@ -1128,7 +1206,7 @@ local function build_status_string(data, window, pane)
     if cd.primary_reset then
       codex_str = codex_str .. DIM .. " (" .. cd.primary_reset .. ")"
     end
-    if cd.secondary_pct ~= nil then
+    if config.show_seven_day and cd.secondary_pct ~= nil then
       codex_str = codex_str .. DIM .. "  " .. config.icons.week .. " "
         .. BRIGHT .. "7d "
       if secondary_bar then
@@ -1142,13 +1220,23 @@ local function build_status_string(data, window, pane)
     end
 
   else
-    codex_str = DIM .. " ✦ " .. BRIGHT .. "Codex: " .. DIM .. "loading..."
+    codex_str = codex_prefix .. DIM .. "loading..."
   end
 
   -- ── Join with separator ──────────────────────────────────
+  -- When Codex is hidden (idle + hide_codex_when_idle), drop the separator too.
+  if codex_str == nil or codex_str == "" then
+    return claude_str .. " " .. RESET
+  end
   return claude_str
     .. DIM .. "  |" .. codex_str
     .. " " .. RESET
+end
+
+-- Returns the rendered status string (the same one the plugin would draw), so a
+-- custom status handler can merge it with other content into a shared overlay.
+function M.status_string(window, pane)
+  return build_status_string(fetch_usage(), window, pane)
 end
 
 function M.apply_to_config(c, opts)
@@ -1170,6 +1258,13 @@ function M.apply_to_config(c, opts)
     wezterm.on("open-claude-dashboard", function()
       wezterm.open_with(DASHBOARD_URL)
     end)
+  end
+
+  -- manual mode: the caller renders via M.status_string() in its own status
+  -- handler, so don't register our own drawer (which would own a whole status
+  -- side). The dashboard keybind above still applies.
+  if config.manual then
+    return
   end
 
   -- Guard against duplicate handler registration
