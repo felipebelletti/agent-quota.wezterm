@@ -144,6 +144,35 @@ end)
 `status_string()` returns a raw-ANSI string (the same one the plugin would draw), so it
 can be concatenated with other escape-coded content.
 
+### Brand logos (optional)
+
+This fork bundles a small font (`fonts/AgentQuotaLogos.otf`) containing the **Claude
+mark** (`U+E900`) and the **Codex/OpenAI mark** (`U+E901`), so you can use the real
+logos as the segment icons instead of text or Nerd Font glyphs. They are single-color
+glyphs, so they take the surrounding text color.
+
+```lua
+local quota = wezterm.plugin.require("https://github.com/felipebelletti/agent-quota.wezterm")
+
+-- 1) Load the bundled logo font; keep it last in the fallback so your primary
+--    font still defines the cell metrics:
+config.font_dirs = { quota.logo_font_dir() }
+config.font = wezterm.font_with_fallback({ "JetBrains Mono", quota.LOGO_FONT })
+
+-- 2) Use the logos as icons (label = "" => icon only):
+quota.apply_to_config(config, {
+  claude = { icon = quota.logo.claude, label = "" },
+  codex  = { icon = quota.logo.codex,  label = "" },
+})
+```
+
+A full WezTerm **restart** is required the first time so the new font is scanned.
+Exposed helpers: `quota.LOGO_FONT` (family name), `quota.logo.claude` / `quota.logo.codex`
+(the glyph strings), and `quota.logo_font_dir()` (the bundled font directory).
+
+> The Claude and OpenAI logos are trademarks of Anthropic and OpenAI respectively, and
+> are bundled solely to identify each provider in the status bar.
+
 ## How It Works
 
 Claude:

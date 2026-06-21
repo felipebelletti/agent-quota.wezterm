@@ -1239,6 +1239,19 @@ function M.status_string(window, pane)
   return build_status_string(fetch_usage(), window, pane)
 end
 
+-- ── Bundled brand logos (optional) ──────────────────────────
+-- A custom font (fonts/AgentQuotaLogos.otf) carrying the Claude mark at U+E900
+-- and the Codex/OpenAI mark at U+E901, so the real logos can be used as segment
+-- icons. The glyphs are single-color (they take the surrounding text color).
+-- Add M.logo_font_dir() to config.font_dirs and M.LOGO_FONT to your font
+-- fallback, then pass M.logo.claude / M.logo.codex as icons.
+M.LOGO_FONT = "Agent Quota Logos"
+M.logo = { claude = utf8.char(0xE900), codex = utf8.char(0xE901) }
+function M.logo_font_dir()
+  local dir = plugin_dir_from_list()
+  return dir and (dir .. "/fonts") or nil
+end
+
 function M.apply_to_config(c, opts)
   if opts then
     config = deep_merge(config, opts)
