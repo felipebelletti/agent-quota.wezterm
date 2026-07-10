@@ -2,14 +2,19 @@ local wezterm = require("wezterm")
 
 local M = {}
 
+local is_windows = type(wezterm.target_triple) == "string"
+  and wezterm.target_triple:find("windows") ~= nil
+
 -- Config defaults
 local config = {
   poll_interval_secs = 60,
   position = "right", -- "left" or "right"
   dashboard_key = { key = "u", mods = "CTRL|SHIFT" }, -- keybind to open dashboard
   icons = {
-    bolt = "⚡",
-    week = "▪",
+    claude = "⚡", -- override to taste, e.g. "▲"
+    codex  = "✦", -- override to taste, e.g. "◆"
+    week   = "▪",
+    bolt   = "⚡", -- legacy alias
   },
   bars = {
     enabled = true,
@@ -17,6 +22,8 @@ local config = {
     full = "█",
     empty = "░",
   },
+  codex_script = nil, -- explicit path to codex-limits.py, overrides auto-detection
+  compact = false,    -- hide reset countdowns to save space
 }
 
 -- Cached usage data
@@ -92,10 +99,21 @@ local function current_file_path()
     return nil
   end
 
-  local info = dbg.getinfo(1, "S")
-  local source = info and info.source or nil
-  if type(source) == "string" and source:sub(1, 1) == "@" then
-    return source:sub(2)
+  -- Walk the call stack: WezTerm's plugin loader may not set level-1 source
+  -- to a file path, so scan upward until we find a level whose source ends in
+  -- init.lua (i.e. this file).
+  for level = 1, 20 do
+    local info = dbg.getinfo(level, "S")
+    if not info then
+      break
+    end
+    local source = info.source
+    if type(source) == "string" and source:sub(1, 1) == "@" then
+      local path = source:sub(2)
+      if path:find("[/\\]init%.lua$") or path:find("^init%.lua$") then
+        return path
+      end
+    end
   end
   return nil
 end
@@ -120,7 +138,7 @@ local function file_exists(path)
 end
 
 local function resolve_codex_script()
-  local home = os.getenv("HOME") or ""
+  local home = os.getenv("HOME") or os.getenv("USERPROFILE") or ""
   local plugin_dir = dirname(current_file_path())
   local candidates = {}
 
@@ -130,14 +148,25 @@ local function resolve_codex_script()
   end
 
   if plugin_dir then
-    candidates[#candidates + 1] = plugin_dir .. "/../codex-limits.py"
+    local repo_root = dirname(plugin_dir)
+    if repo_root then
+      candidates[#candidates + 1] = repo_root .. "/codex-limits.py"
+      candidates[#candidates + 1] = repo_root .. "\\codex-limits.py"
+    end
     candidates[#candidates + 1] = plugin_dir .. "/codex-limits.py"
+    candidates[#candidates + 1] = plugin_dir .. "\\codex-limits.py"
   end
 
   if home ~= "" then
-    candidates[#candidates + 1] = home .. "/dev/Plugins/wezterm-quota-limit/codex-limits.py"
-    candidates[#candidates + 1] = home .. "/dev/Plugins/agent-quota.wezterm/codex-limits.py"
-    candidates[#candidates + 1] = home .. "/.local/share/wezterm/codex-limits.py"
+    if is_windows then
+      local appdata = os.getenv("LOCALAPPDATA") or (home .. "\\AppData\\Local")
+      candidates[#candidates + 1] = appdata .. "\\wezterm\\codex-limits.py"
+      candidates[#candidates + 1] = home .. "\\dev\\Plugins\\agent-quota.wezterm\\codex-limits.py"
+    else
+      candidates[#candidates + 1] = home .. "/dev/Plugins/wezterm-quota-limit/codex-limits.py"
+      candidates[#candidates + 1] = home .. "/dev/Plugins/agent-quota.wezterm/codex-limits.py"
+      candidates[#candidates + 1] = home .. "/.local/share/wezterm/codex-limits.py"
+    end
   end
 
   for _, candidate in ipairs(candidates) do
@@ -146,7 +175,34 @@ local function resolve_codex_script()
     end
   end
 
-  if home ~= "" then
+  if is_windows then
+    local appdata = os.getenv("LOCALAPPDATA") or (home ~= "" and (home .. "\\AppData\\Local") or "")
+    if appdata ~= "" then
+      local plugins_dir = appdata .. "\\wezterm\\plugins"
+      local ok, stdout = wezterm.run_child_process({
+        "powershell", "-NoProfile", "-Command",
+        "Get-ChildItem -Path '"
+          .. plugins_dir:gsub("'", "''")
+          .. "' -Recurse -Depth 5 -Filter 'codex-limits.py' -ErrorAction SilentlyContinue"
+          .. " | Select-Object -ExpandProperty FullName",
+      })
+      if ok and stdout and stdout ~= "" then
+        local selected = nil
+        for line in stdout:gmatch("[^\r\n]+") do
+          if not selected then
+            selected = line
+          end
+          if line:find("agent%-quota%.wezterm", 1, false) then
+            selected = line
+            break
+          end
+        end
+        if selected and file_exists(selected) then
+          return selected
+        end
+      end
+    end
+  elseif home ~= "" then
     local plugins_dir = home .. "/.local/share/wezterm/plugins"
     local ok, stdout = wezterm.run_child_process({
       "find",
@@ -215,6 +271,11 @@ end
 local function cache_prefix()
   local user = os.getenv("USER") or os.getenv("USERNAME") or "user"
   user = user:gsub("[^%w_.-]", "_")
+  if is_windows then
+    local tmp = os.getenv("TEMP") or os.getenv("TMP")
+      or (os.getenv("USERPROFILE") or "C:\\Users\\Default") .. "\\AppData\\Local\\Temp"
+    return tmp .. "\\wezterm-quota-limit-" .. user
+  end
   return "/tmp/wezterm-quota-limit-" .. user
 end
 
@@ -350,6 +411,11 @@ local function write_json_file(path, value)
 
   f:write(encoded)
   f:close()
+
+  -- Windows: os.rename fails if destination exists; remove it first
+  if is_windows then
+    os.remove(path)
+  end
 
   local renamed, err = os.rename(tmp_path, path)
   if not renamed then
@@ -515,6 +581,23 @@ local function build_cache_entry(data, error_count, last_err, now, retry_secs)
 end
 
 local function lock_age_secs(lock_dir)
+  if is_windows then
+    local ok, stdout = wezterm.run_child_process({
+      "powershell", "-NoProfile", "-Command",
+      "[int64]([DateTimeOffset]::new((Get-Item -LiteralPath '"
+        .. lock_dir:gsub("'", "''")
+        .. "' -ErrorAction Stop).LastWriteTimeUtc)).ToUnixTimeSeconds()",
+    })
+    if not ok or not stdout then
+      return nil
+    end
+    local mtime = tonumber(stdout:match("(%d+)"))
+    if not mtime then
+      return nil
+    end
+    return os.time() - mtime
+  end
+
   local ok, stdout = wezterm.run_child_process({ "stat", "-c", "%Y", lock_dir })
   if not ok or not stdout then
     return nil
@@ -529,22 +612,26 @@ local function lock_age_secs(lock_dir)
 end
 
 local function acquire_lock(lock_dir)
-  local ok = wezterm.run_child_process({ "mkdir", lock_dir })
+  local mkdir_cmd = is_windows and { "cmd", "/c", "mkdir", lock_dir } or { "mkdir", lock_dir }
+  local rmdir_cmd = is_windows and { "cmd", "/c", "rmdir", lock_dir } or { "rmdir", lock_dir }
+
+  local ok = wezterm.run_child_process(mkdir_cmd)
   if ok then
     return true
   end
 
   local age = lock_age_secs(lock_dir)
   if age and age > LOCK_TIMEOUT_SECS then
-    wezterm.run_child_process({ "rmdir", lock_dir })
-    return wezterm.run_child_process({ "mkdir", lock_dir })
+    wezterm.run_child_process(rmdir_cmd)
+    return wezterm.run_child_process(mkdir_cmd)
   end
 
   return false
 end
 
 local function release_lock(lock_dir)
-  wezterm.run_child_process({ "rmdir", lock_dir })
+  local rmdir_cmd = is_windows and { "cmd", "/c", "rmdir", lock_dir } or { "rmdir", lock_dir }
+  wezterm.run_child_process(rmdir_cmd)
 end
 
 local function cacheable_data(data, now)
@@ -622,8 +709,15 @@ local function sync_codex_shared_state(entry)
   codex_last_error = entry.last_error
 end
 
--- Path to the bundled Codex helper script
-local CODEX_SCRIPT = resolve_codex_script()
+-- Path to the bundled Codex helper script (resolved lazily on first use)
+local CODEX_SCRIPT = nil
+local function get_codex_script()
+  if not CODEX_SCRIPT then
+    CODEX_SCRIPT = config.codex_script or resolve_codex_script()
+    wezterm.log_info("agent-quota: codex script resolved to: " .. tostring(CODEX_SCRIPT))
+  end
+  return CODEX_SCRIPT
+end
 
 -- Format a Unix timestamp as time-until string
 local function time_until_unix(ts)
@@ -635,25 +729,33 @@ local function time_until_unix(ts)
   return string.format("%dd%dh", math.floor(diff / 86400), math.floor((diff % 86400) / 3600))
 end
 
--- Returns true if an interactive Codex session (tty-attached, not VS Code app-server daemon) is running.
--- Uses ps rather than /proc to work reliably in WezTerm's GUI subprocess environment.
+-- Returns true if a Codex session is running.
 -- Used only as a display hint — never gates quota fetching.
 local function is_codex_running()
   local now = os.time()
   if now - codex_running_checked_at < PROCESS_CHECK_TTL then
     return codex_running_cached
   end
-  -- Single ps call; parse in Lua instead of spawning sh + grep + grep
-  local ok, stdout = wezterm.run_child_process({ "ps", "-eo", "comm=,tty=" })
+
   local found = false
-  if ok and stdout then
-    for line in stdout:gmatch("[^\n]+") do
-      if line:match("^codex ") and not line:match("%s%?$") then
-        found = true
-        break
+  if is_windows then
+    local ok, stdout = wezterm.run_child_process({
+      "tasklist", "/FI", "IMAGENAME eq codex.exe", "/NH", "/FO", "CSV",
+    })
+    found = ok and stdout ~= nil and stdout:find('"codex.exe"') ~= nil
+  else
+    -- Single ps call; parse in Lua instead of spawning sh + grep + grep
+    local ok, stdout = wezterm.run_child_process({ "ps", "-eo", "comm=,tty=" })
+    if ok and stdout then
+      for line in stdout:gmatch("[^\n]+") do
+        if line:match("^codex ") and not line:match("%s%?$") then
+          found = true
+          break
+        end
       end
     end
   end
+
   codex_running_cached = found
   codex_running_checked_at = now
   return codex_running_cached
@@ -672,7 +774,7 @@ local function fetch_codex_limits()
   -- No running gate: quota is account-level and always fetchable.
   -- is_codex_running() is used only in the display layer as an activity hint.
 
-  if not file_exists(CODEX_SCRIPT) then
+  if not file_exists(get_codex_script()) then
     codex_cached = { error = "missing bundled codex helper" }
     codex_errors = codex_errors + 1
     codex_last_error = "missing bundled codex helper"
@@ -740,7 +842,8 @@ local function fetch_codex_limits()
   local previous_errors = tonumber(locked_cache and locked_cache.error_count) or codex_errors or 0
 
   -- Query Codex rate limits via the helper script
-  local success, stdout, stderr = wezterm.run_child_process({ "python3", CODEX_SCRIPT })
+  local python_cmd = is_windows and "python" or "python3"
+  local success, stdout, stderr = wezterm.run_child_process({ python_cmd, get_codex_script() })
   local raw = stdout and stdout:match("^%s*(.-)%s*$") or ""
 
   if raw == "" then
@@ -931,8 +1034,17 @@ local function is_claude_running()
   if now - claude_running_checked_at < PROCESS_CHECK_TTL then
     return claude_running_cached
   end
-  local ok, stdout = wezterm.run_child_process({ "pgrep", "-x", "claude" })
-  claude_running_cached = ok and stdout and stdout:match("%d") ~= nil
+
+  if is_windows then
+    local ok, stdout = wezterm.run_child_process({
+      "tasklist", "/FI", "IMAGENAME eq claude.exe", "/NH", "/FO", "CSV",
+    })
+    claude_running_cached = ok and stdout ~= nil and stdout:find('"claude.exe"') ~= nil
+  else
+    local ok, stdout = wezterm.run_child_process({ "pgrep", "-x", "claude" })
+    claude_running_cached = ok and stdout ~= nil and stdout:match("%d") ~= nil
+  end
+
   claude_running_checked_at = now
   return claude_running_cached
 end
@@ -1059,14 +1171,15 @@ local DASHBOARD_URL = "https://console.anthropic.com/settings/usage"
 local function build_status_string(data, window, pane)
   -- ── Claude ──────────────────────────────────────────────
   local claude_str
+  local ci = " " .. (config.icons.claude or config.icons.bolt or "⚡") .. " "
   if data.not_running then
-    claude_str = DIM .. " ⚡ " .. BRIGHT .. "Claude: " .. DIM .. "not running"
+    claude_str = DIM .. ci .. BRIGHT .. "Claude: " .. DIM .. "not running"
   elseif data.syncing then
-    claude_str = DIM .. " ⚡ " .. BRIGHT .. "Claude: " .. DIM .. "syncing..."
+    claude_str = DIM .. ci .. BRIGHT .. "Claude: " .. DIM .. "syncing..."
   elseif is_rate_limited_error(data.error) then
-    claude_str = DIM .. " ⚡ " .. BRIGHT .. "Claude: " .. DIM .. "syncing..."
+    claude_str = DIM .. ci .. BRIGHT .. "Claude: " .. DIM .. "syncing..."
   elseif data.error then
-    claude_str = DIM .. " ⚡ Claude: "
+    claude_str = DIM .. ci .. "Claude: "
       .. hex_to_fg("#f7768e") .. tostring(data.error)
   else
     local five_pct   = data.five_hour and data.five_hour.utilization or 0
@@ -1076,14 +1189,16 @@ local function build_status_string(data, window, pane)
     local five_bar   = usage_bar_esc(five_pct)
     local seven_bar  = usage_bar_esc(seven_pct)
 
-    claude_str = DIM .. " ⚡ " .. BRIGHT .. "Claude: "
+    claude_str = DIM .. ci .. BRIGHT .. "Claude: "
       .. BRIGHT .. "5h "
     if five_bar then
       claude_str = claude_str .. five_bar .. DIM .. " "
     end
     claude_str = claude_str
       .. usage_color_esc(five_pct) .. string.format("%.0f%%", five_pct)
-      .. DIM .. " (" .. time_until(five_reset) .. ")"
+    if not config.compact then
+      claude_str = claude_str .. DIM .. " (" .. time_until(five_reset) .. ")"
+    end
 
     claude_str = claude_str .. DIM .. "  " .. config.icons.week .. " "
       .. BRIGHT .. "7d "
@@ -1092,40 +1207,43 @@ local function build_status_string(data, window, pane)
     end
     claude_str = claude_str
       .. usage_color_esc(seven_pct) .. string.format("%.0f%%", seven_pct)
-      .. DIM .. " (" .. time_until(seven_reset) .. ")"
+    if not config.compact then
+      claude_str = claude_str .. DIM .. " (" .. time_until(seven_reset) .. ")"
+    end
   end
 
   -- ── Codex ───────────────────────────────────────────────
   local codex_str
   local cd, codex_active = fetch_codex_limits()
 
+  local coi = " " .. (config.icons.codex or "✦") .. " "
   if not codex_active then
-    codex_str = DIM .. " ✦ " .. BRIGHT .. "Codex: " .. DIM .. "not running"
+    codex_str = DIM .. coi .. BRIGHT .. "Codex: " .. DIM .. "not running"
 
   elseif cd.error == "not running" then
-    codex_str = DIM .. " ✦ " .. BRIGHT .. "Codex: " .. DIM .. "loading..."
+    codex_str = DIM .. coi .. BRIGHT .. "Codex: " .. DIM .. "loading..."
   elseif cd.syncing then
-    codex_str = DIM .. " ✦ " .. BRIGHT .. "Codex: " .. DIM .. "syncing..."
+    codex_str = DIM .. coi .. BRIGHT .. "Codex: " .. DIM .. "syncing..."
 
   elseif cd.ready then
-    codex_str = DIM .. " ✦ " .. BRIGHT .. "Codex: " .. hex_to_fg("#9ece6a") .. "ready"
+    codex_str = DIM .. coi .. BRIGHT .. "Codex: " .. hex_to_fg("#9ece6a") .. "ready"
 
   elseif cd.error then
-    codex_str = DIM .. " ✦ Codex: " .. hex_to_fg("#f7768e") .. tostring(cd.error)
+    codex_str = DIM .. coi .. "Codex: " .. hex_to_fg("#f7768e") .. tostring(cd.error)
 
   elseif cd.primary_pct ~= nil then
     -- Full usage data from app-server
     local win_label = cd.primary_mins and string.format("%dh", math.floor(cd.primary_mins / 60)) or "5h"
     local primary_bar = usage_bar_esc(cd.primary_pct)
     local secondary_bar = cd.secondary_pct ~= nil and usage_bar_esc(cd.secondary_pct) or nil
-    codex_str = DIM .. " ✦ " .. BRIGHT .. "Codex: "
+    codex_str = DIM .. coi .. BRIGHT .. "Codex: "
       .. BRIGHT .. win_label .. " "
     if primary_bar then
       codex_str = codex_str .. primary_bar .. DIM .. " "
     end
     codex_str = codex_str
       .. usage_color_esc(cd.primary_pct) .. string.format("%.0f%%", cd.primary_pct)
-    if cd.primary_reset then
+    if cd.primary_reset and not config.compact then
       codex_str = codex_str .. DIM .. " (" .. cd.primary_reset .. ")"
     end
     if cd.secondary_pct ~= nil then
@@ -1136,13 +1254,13 @@ local function build_status_string(data, window, pane)
       end
       codex_str = codex_str
         .. usage_color_esc(cd.secondary_pct) .. string.format("%.0f%%", cd.secondary_pct)
-      if cd.secondary_reset then
+      if cd.secondary_reset and not config.compact then
         codex_str = codex_str .. DIM .. " (" .. cd.secondary_reset .. ")"
       end
     end
 
   else
-    codex_str = DIM .. " ✦ " .. BRIGHT .. "Codex: " .. DIM .. "loading..."
+    codex_str = DIM .. coi .. BRIGHT .. "Codex: " .. DIM .. "loading..."
   end
 
   -- ── Join with separator ──────────────────────────────────
@@ -1154,6 +1272,7 @@ end
 function M.apply_to_config(c, opts)
   if opts then
     config = deep_merge(config, opts)
+    CODEX_SCRIPT = nil -- reset so get_codex_script() re-resolves with new config
   end
 
   -- Add keybinding to open usage dashboard

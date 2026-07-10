@@ -30,12 +30,13 @@ Claude: 5h ███░░░░░ 42% (2h31m)  ▪ 7d █░░░░░░░
 
 ## Requirements
 
-Tested on Linux.
+Tested on Linux and Windows.
 
 - [WezTerm](https://wezterm.org/)
-- `python3`
-- `curl`
-- `pgrep`, `ps`, `mkdir`, `rmdir`, and GNU `stat`
+- `python3` (or `python` on Windows)
+- `curl` (bundled with Windows 10/11)
+- Linux: `pgrep`, `ps`, `mkdir`, `rmdir`, and GNU `stat`
+- Windows: `tasklist` (bundled) for process detection
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated for Claude usage display
 - [OpenAI Codex CLI](https://github.com/openai/codex) installed and authenticated for Codex usage display
 
@@ -80,9 +81,11 @@ quota.apply_to_config(config, {
   poll_interval_secs = 120,
   position = "left",
   dashboard_key = { key = "u", mods = "CTRL|SHIFT" },
+  compact = false,
   icons = {
-    bolt = "⚡",
-    week = "▪",
+    claude = "⚡",
+    codex  = "✦",
+    week   = "▪",
   },
   bars = {
     enabled = true,
@@ -90,6 +93,7 @@ quota.apply_to_config(config, {
     full = "█",
     empty = "░",
   },
+  -- codex_script = "/absolute/path/to/codex-limits.py",
 })
 ```
 
@@ -98,11 +102,58 @@ Options:
 - `poll_interval_secs`: refresh interval for successful reads. Default: `60`
 - `position`: `"left"` or `"right"`. Default: `"right"`
 - `dashboard_key`: opens the Claude usage dashboard. Default: `CTRL+SHIFT+U`
-- `icons.bolt`: Claude prefix icon
+- `compact`: hide reset countdowns to shrink the status-bar footprint. Default: `false`
+- `icons.claude`: Claude prefix icon. Default: `⚡` (override to taste, e.g. `▲`)
+- `icons.codex`: Codex prefix icon. Default: `✦` (override to taste, e.g. `◆`)
 - `icons.week`: separator before the 7-day window
 - `bars.enabled`: show compact percentage bars
 - `bars.width`: number of bar cells
 - `bars.full` / `bars.empty`: glyphs used for the bar
+- `codex_script`: absolute path to `codex-limits.py`, overriding auto-discovery. Default: `nil` (auto-detect)
+
+### Compact mode
+
+Set `compact = true` to drop the reset countdowns from the status bar. Usage percentages and bars are kept, only the trailing `(2h31m)` style reset timers are hidden. This is useful on narrow terminals or when the status bar shares space with other widgets.
+
+```lua
+quota.apply_to_config(config, { compact = true })
+```
+
+### Codex script path
+
+The plugin resolves its bundled `codex-limits.py` helper automatically. If auto-discovery fails in a custom setup, point `codex_script` at the helper directly:
+
+```lua
+quota.apply_to_config(config, {
+  codex_script = "/absolute/path/to/codex-limits.py",
+})
+```
+
+The path is resolved lazily on first use, so an incorrect value only affects the Codex side and never blocks Claude display.
+
+## Windows
+
+The plugin runs on native Windows WezTerm. Platform differences are handled automatically:
+
+- Process detection uses `tasklist` instead of `pgrep`.
+- The shared cache is written to the user temp directory (`%TEMP%`) instead of `/tmp`.
+- Python is invoked as `python` when `python3` is not on `PATH`.
+
+### Process detection
+
+Claude and Codex fetching is gated on the corresponding CLI actually running, so process detection matters. Both tools install as npm shims but launch a bundled **native** binary as a child process, which appears in `tasklist` under its own image name:
+
+- Claude Code runs as `claude.exe`
+- Codex runs as `codex.exe` (the `node.exe` launcher spawns the native binary from its `vendor` directory)
+
+The image name stays the same on both x64 and arm64, so `IMAGENAME eq claude.exe` / `codex.exe` matches on either architecture. You can confirm a tool is detectable while it is running with:
+
+```powershell
+tasklist /FI "IMAGENAME eq claude.exe"
+tasklist /FI "IMAGENAME eq codex.exe"
+```
+
+If either command shows no process while the CLI is open, the status bar will show `not running` for that side.
 
 ## How It Works
 
@@ -133,21 +184,21 @@ Status display:
 
 ## Compatibility
 
-- Primary target: Linux desktop sessions running WezTerm.
+- Targets: Linux and Windows desktop sessions running WezTerm.
 - Claude credentials are read from `~/.claude/.credentials.json`.
 - Codex usage is read through `codex app-server --listen stdio://`, so the installed Codex CLI must support app-server rate-limit reads.
-- Required command-line tools are `python3`, `curl`, `pgrep`, `ps`, `mkdir`, `rmdir`, and GNU `stat`.
+- Required command-line tools on Linux are `python3`, `curl`, `pgrep`, `ps`, `mkdir`, `rmdir`, and GNU `stat`; on Windows they are `python`/`python3`, `curl`, and `tasklist`.
 
 ## Known Limitations
 
 - The plugin does not refresh Claude or Codex authentication itself; it waits for the corresponding CLI to keep credentials valid.
 - Codex displays `not running` unless an interactive Codex process is attached to a terminal. Quota data may still be fetchable in the background, but the visible status remains process-aware.
 - Claude usage calls are intentionally cached and retried with backoff to avoid unnecessary API pressure.
-- macOS and Windows are not currently tested release targets.
+- macOS is not currently a tested release target.
 
 ## Troubleshooting
 
-- Claude shows `not running`: confirm `pgrep -x claude` returns a process.
+- Claude shows `not running`: confirm `pgrep -x claude` (Linux) or `tasklist /FI "IMAGENAME eq claude.exe"` (Windows) returns a process.
 - Codex shows `not running`: open Codex in a WezTerm pane and keep that pane alive; detection uses WezTerm pane process info.
 - Codex helper fails in a GUI PATH environment: run `python3 codex-limits.py` directly; the helper auto-discovers common `nvm` installs.
 - Codex helper path resolution fails in a custom environment: set `WEZTERM_AGENT_QUOTA_CODEX_HELPER=/absolute/path/to/codex-limits.py` before launching WezTerm.
