@@ -6,14 +6,14 @@
 
 A WezTerm plugin that shows Claude and Codex quota usage directly in the status bar.
 
-It displays live 5-hour and 7-day usage windows, reset countdowns, process-aware `not running` states, compact percentage bars, and a shared cache so multiple WezTerm windows do not all refresh the same data independently.
+It displays live usage windows returned by each provider, reset countdowns, process-aware `not running` states, compact percentage bars, and a shared cache so multiple WezTerm windows do not all refresh the same data independently.
 
 ![Agent Quota status bar sample](assets/status-sample.svg)
 
 ## Features
 
 - Claude 5-hour and 7-day utilization
-- Codex 5-hour and 7-day utilization
+- Codex utilization windows returned by the account
 - Reset countdowns for both providers
 - Compact 8-cell percentage bars
 - Process-aware `not running` status for Claude and Codex
@@ -105,7 +105,7 @@ Options:
 - `compact`: hide reset countdowns to shrink the status-bar footprint. Default: `false`
 - `icons.claude`: Claude prefix icon. Default: `⚡` (override to taste, e.g. `▲`)
 - `icons.codex`: Codex prefix icon. Default: `✦` (override to taste, e.g. `◆`)
-- `icons.week`: separator before the 7-day window
+- `icons.week`: separator between Codex usage windows
 - `bars.enabled`: show compact percentage bars
 - `bars.width`: number of bar cells
 - `bars.full` / `bars.empty`: glyphs used for the bar
@@ -169,6 +169,9 @@ Codex:
 - runs the bundled `codex-limits.py`
 - the helper starts `codex app-server --listen stdio://`
 - reads `account/rateLimits/read`
+- displays each returned usage window using its actual duration, such as `5h` or `7d`
+- omits windows that are not returned and shows them again automatically if Codex reintroduces them
+- displays the reset countdown from the returned `resetsAt` timestamp
 
 Shared cache:
 

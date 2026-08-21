@@ -729,6 +729,18 @@ local function time_until_unix(ts)
   return string.format("%dd%dh", math.floor(diff / 86400), math.floor((diff % 86400) / 3600))
 end
 
+local function codex_window_label(window_mins)
+  local mins = tonumber(window_mins)
+  if not mins or mins <= 0 then
+    return "window"
+  elseif mins % 1440 == 0 then
+    return string.format("%dd", math.floor(mins / 1440))
+  elseif mins % 60 == 0 then
+    return string.format("%dh", math.floor(mins / 60))
+  end
+  return string.format("%dm", math.floor(mins))
+end
+
 -- Returns true if a Codex session is running.
 -- Used only as a display hint — never gates quota fetching.
 local function is_codex_running()
@@ -883,6 +895,7 @@ local function fetch_codex_limits()
           secondary_reset = secondary and time_until_unix(secondary.resetsAt) or nil,
           secondary_reset_at = secondary and secondary.resetsAt or nil,
           primary_mins = primary.windowDurationMins,
+          secondary_mins = secondary and secondary.windowDurationMins or nil,
         }, 0, nil, now)
       end
     end
@@ -1233,7 +1246,7 @@ local function build_status_string(data, window, pane)
 
   elseif cd.primary_pct ~= nil then
     -- Full usage data from app-server
-    local win_label = cd.primary_mins and string.format("%dh", math.floor(cd.primary_mins / 60)) or "5h"
+    local win_label = codex_window_label(cd.primary_mins)
     local primary_bar = usage_bar_esc(cd.primary_pct)
     local secondary_bar = cd.secondary_pct ~= nil and usage_bar_esc(cd.secondary_pct) or nil
     codex_str = DIM .. coi .. BRIGHT .. "Codex: "
@@ -1247,8 +1260,9 @@ local function build_status_string(data, window, pane)
       codex_str = codex_str .. DIM .. " (" .. cd.primary_reset .. ")"
     end
     if cd.secondary_pct ~= nil then
+      local secondary_label = codex_window_label(cd.secondary_mins)
       codex_str = codex_str .. DIM .. "  " .. config.icons.week .. " "
-        .. BRIGHT .. "7d "
+        .. BRIGHT .. secondary_label .. " "
       if secondary_bar then
         codex_str = codex_str .. secondary_bar .. DIM .. " "
       end
