@@ -160,6 +160,7 @@ If either command shows no process while the CLI is open, the status bar will sh
 Claude:
 
 - reads the OAuth token from `~/.claude/.credentials.json`
+- scopes `accessToken` and `expiresAt` to the `claudeAiOauth` block, avoiding unrelated expiry fields such as `discoveryState.expiresAt`
 - calls the Anthropic OAuth usage endpoint
 - preserves stale data and backs off on repeated errors
 - stops trusting stale data once a reported reset boundary has already passed, and briefly shows `syncing...` until fresh data arrives

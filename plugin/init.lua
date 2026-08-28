@@ -945,12 +945,19 @@ local function get_token()
     return nil, nil, err
   end
 
-  local token = content:match('"claudeAiOauth"%s*:%s*{[^}]*"accessToken"%s*:%s*"([^"]+)"')
+  -- Use %b{} to extract the claudeAiOauth block so expiresAt doesn't match
+  -- an earlier field (e.g. discoveryState.expiresAt = 0) in the credentials file.
+  local block = content:match('"claudeAiOauth"%s*:%s*(%b{})')
+  if not block then
+    return nil, nil, "no claudeAiOauth block in credentials"
+  end
+
+  local token = block:match('"accessToken"%s*:%s*"([^"]+)"')
   if not token then
     return nil, nil, "no accessToken in credentials"
   end
 
-  local expires_at = content:match('"expiresAt"%s*:%s*(%d+)')
+  local expires_at = block:match('"expiresAt"%s*:%s*(%d+)')
   return token, tonumber(expires_at), nil
 end
 
