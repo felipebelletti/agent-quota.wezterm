@@ -1042,6 +1042,20 @@ local function call_usage_api(token)
   return body, tonumber(http_code), nil
 end
 
+local function has_claude_cli_process(output)
+  if type(output) ~= "string" then
+    return false
+  end
+
+  for line in output:gmatch("[^\r\n]+") do
+    if line:match("%S") and not line:find("--chrome-native-host", 1, true) then
+      return true
+    end
+  end
+
+  return false
+end
+
 local function is_claude_running()
   local now = os.time()
   if now - claude_running_checked_at < PROCESS_CHECK_TTL then
@@ -1050,12 +1064,14 @@ local function is_claude_running()
 
   if is_windows then
     local ok, stdout = wezterm.run_child_process({
-      "tasklist", "/FI", "IMAGENAME eq claude.exe", "/NH", "/FO", "CSV",
+      "powershell", "-NoProfile", "-Command",
+      "Get-CimInstance Win32_Process -Filter \"Name = 'claude.exe'\""
+        .. " | ForEach-Object { $_.CommandLine }",
     })
-    claude_running_cached = ok and stdout ~= nil and stdout:find('"claude.exe"') ~= nil
+    claude_running_cached = ok and has_claude_cli_process(stdout)
   else
-    local ok, stdout = wezterm.run_child_process({ "pgrep", "-x", "claude" })
-    claude_running_cached = ok and stdout ~= nil and stdout:match("%d") ~= nil
+    local ok, stdout = wezterm.run_child_process({ "pgrep", "-a", "-x", "claude" })
+    claude_running_cached = ok and has_claude_cli_process(stdout)
   end
 
   claude_running_checked_at = now

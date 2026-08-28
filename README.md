@@ -135,13 +135,13 @@ The path is resolved lazily on first use, so an incorrect value only affects the
 
 The plugin runs on native Windows WezTerm. Platform differences are handled automatically:
 
-- Process detection uses `tasklist` instead of `pgrep`.
+- Codex process detection uses `tasklist`; Claude process detection inspects command lines so the Chrome native host can be excluded.
 - The shared cache is written to the user temp directory (`%TEMP%`) instead of `/tmp`.
 - Python is invoked as `python` when `python3` is not on `PATH`.
 
 ### Process detection
 
-Claude and Codex fetching is gated on the corresponding CLI actually running, so process detection matters. Both tools install as npm shims but launch a bundled **native** binary as a child process, which appears in `tasklist` under its own image name:
+Claude and Codex fetching is gated on the corresponding CLI actually running, so process detection matters. Both tools install as npm shims but launch a bundled **native** binary as a child process. Claude's Chrome native host is ignored so it does not count as Claude Code:
 
 - Claude Code runs as `claude.exe`
 - Codex runs as `codex.exe` (the `node.exe` launcher spawns the native binary from its `vendor` directory)
@@ -201,7 +201,7 @@ Status display:
 
 ## Troubleshooting
 
-- Claude shows `not running`: confirm `pgrep -x claude` (Linux) or `tasklist /FI "IMAGENAME eq claude.exe"` (Windows) returns a process.
+- Claude shows `not running`: confirm a Claude Code process is running with `pgrep -a -x claude` (Linux) or Task Manager (Windows), excluding the `--chrome-native-host` process.
 - Codex shows `not running`: open Codex in a WezTerm pane and keep that pane alive; detection uses WezTerm pane process info.
 - Codex helper fails in a GUI PATH environment: run `python3 codex-limits.py` directly; the helper auto-discovers common `nvm` installs.
 - Codex helper path resolution fails in a custom environment: set `WEZTERM_AGENT_QUOTA_CODEX_HELPER=/absolute/path/to/codex-limits.py` before launching WezTerm.
