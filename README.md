@@ -6,7 +6,7 @@
 
 A WezTerm plugin that shows Claude and Codex quota usage directly in the status bar.
 
-It displays live 5-hour and 7-day usage windows, reset countdowns, process-aware `not running` states, compact percentage bars, and a shared cache so multiple WezTerm windows do not all refresh the same data independently.
+It displays live usage windows returned by each provider, reset countdowns, process-aware `not running` states, compact percentage bars, and a shared cache so multiple WezTerm windows do not all refresh the same data independently.
 
 ![Agent Quota status bar sample](assets/status-sample.svg)
 
@@ -15,7 +15,7 @@ It displays live 5-hour and 7-day usage windows, reset countdowns, process-aware
 ## Features
 
 - Claude 5-hour and 7-day utilization
-- Codex 5-hour and 7-day utilization
+- Codex utilization windows returned by the account
 - Reset countdowns for both providers
 - Compact 8-cell percentage bars
 - Process-aware `not running` status for Claude and Codex
@@ -34,12 +34,13 @@ Claude: 5h ███░░░░░ 42% (2h31m)  ▪ 7d █░░░░░░░
 
 ## Requirements
 
-Works on Linux and macOS.
+Works on Linux, macOS, and Windows.
 
 - [WezTerm](https://wezterm.org/)
-- `python3`
-- `curl`
-- `pgrep`, `ps`, `mkdir`, `rmdir` (and GNU `stat` on Linux; `security` is used on macOS)
+- `python3` (or `python` on Windows)
+- `curl` (bundled with Windows 10/11)
+- Linux/macOS: `pgrep`, `ps`, `mkdir`, `rmdir` (plus GNU `stat` on Linux; `security` is used on macOS)
+- Windows: `tasklist` (bundled) for process detection
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed and authenticated for Claude usage display
 - [OpenAI Codex CLI](https://github.com/openai/codex) installed and authenticated for Codex usage display
 
@@ -94,6 +95,7 @@ quota.apply_to_config(config, {
 
   show_seven_day = false,        -- hide the 7-day window (show only 5h)
   hide_codex_when_idle = true,   -- hide the whole Codex segment when no Codex is running
+  compact = false,               -- hide reset countdowns to save space
 
   icons = { week = "▪" },        -- separator glyph before the 7-day window
   bars = {
@@ -102,6 +104,7 @@ quota.apply_to_config(config, {
     full = "█",
     empty = "░",
   },
+  -- codex_script = "/absolute/path/to/codex-limits.py",
 })
 ```
 
@@ -116,10 +119,56 @@ Options:
 - `codex.icon` / `codex.label`: prefix for the Codex segment. Either may be `""` to hide it. Defaults: `"✦"` / `"Codex:"`
 - `show_seven_day`: show the 7-day usage window. Default: `true`
 - `hide_codex_when_idle`: hide the entire Codex segment (and its separator) when no Codex is running. Default: `false`
-- `icons.week`: separator glyph before the 7-day window
+- `compact`: hide reset countdowns to shrink the status-bar footprint. Default: `false`
+- `icons.week`: separator glyph before the 7-day / secondary window
 - `bars.enabled`: show compact percentage bars
 - `bars.width`: number of bar cells
 - `bars.full` / `bars.empty`: glyphs used for the bar
+- `codex_script`: absolute path to `codex-limits.py`, overriding auto-discovery. Default: `nil` (auto-detect)
+
+### Compact mode
+
+Set `compact = true` to drop the reset countdowns from the status bar. Usage percentages and bars are kept, only the trailing `(2h31m)` style reset timers are hidden. This is useful on narrow terminals or when the status bar shares space with other widgets.
+
+```lua
+quota.apply_to_config(config, { compact = true })
+```
+
+### Codex script path
+
+The plugin resolves its bundled `codex-limits.py` helper automatically. If auto-discovery fails in a custom setup, point `codex_script` at the helper directly:
+
+```lua
+quota.apply_to_config(config, {
+  codex_script = "/absolute/path/to/codex-limits.py",
+})
+```
+
+The path is resolved lazily on first use, so an incorrect value only affects the Codex side and never blocks Claude display.
+
+## Windows
+
+The plugin runs on native Windows WezTerm. Platform differences are handled automatically:
+
+- Codex process detection uses `tasklist`; Claude process detection inspects command lines so the Chrome native host can be excluded.
+- The shared cache is written to the user temp directory (`%TEMP%`) instead of `/tmp`.
+- Python is invoked as `python` when `python3` is not on `PATH`.
+
+### Process detection
+
+Claude and Codex fetching is gated on the corresponding CLI actually running, so process detection matters. Both tools install as npm shims but launch a bundled **native** binary as a child process. Claude's Chrome native host is ignored so it does not count as Claude Code:
+
+- Claude Code runs as `claude.exe`
+- Codex runs as `codex.exe` (the `node.exe` launcher spawns the native binary from its `vendor` directory)
+
+The image name stays the same on both x64 and arm64, so `IMAGENAME eq claude.exe` / `codex.exe` matches on either architecture. You can confirm a tool is detectable while it is running with:
+
+```powershell
+tasklist /FI "IMAGENAME eq claude.exe"
+tasklist /FI "IMAGENAME eq codex.exe"
+```
+
+If either command shows no process while the CLI is open, the status bar will show `not running` for that side.
 
 ### Manual rendering
 
@@ -178,6 +227,7 @@ Exposed helpers: `quota.LOGO_FONT` (family name), `quota.logo.claude` / `quota.l
 Claude:
 
 - reads the OAuth token from `~/.claude/.credentials.json`, or the macOS login Keychain (`Claude Code-credentials`) when that file is absent
+- scopes `accessToken` and `expiresAt` to the `claudeAiOauth` block, avoiding unrelated expiry fields such as `discoveryState.expiresAt`
 - calls the Anthropic OAuth usage endpoint
 - preserves stale data and backs off on repeated errors
 - stops trusting stale data once a reported reset boundary has already passed, and briefly shows `syncing...` until fresh data arrives
@@ -187,6 +237,9 @@ Codex:
 - runs the bundled `codex-limits.py`
 - the helper starts `codex app-server --listen stdio://`
 - reads `account/rateLimits/read`
+- displays each returned usage window using its actual duration, such as `5h` or `7d`
+- omits windows that are not returned and shows them again automatically if Codex reintroduces them
+- displays the reset countdown from the returned `resetsAt` timestamp
 
 Shared cache:
 
@@ -202,10 +255,10 @@ Status display:
 
 ## Compatibility
 
-- Targets Linux and macOS desktop sessions running WezTerm.
-- Claude credentials are read from `~/.claude/.credentials.json` (Linux) or the macOS login Keychain item `Claude Code-credentials`.
+- Targets Linux, macOS, and Windows desktop sessions running WezTerm.
+- Claude credentials are read from `~/.claude/.credentials.json` (Linux/Windows) or the macOS login Keychain item `Claude Code-credentials`.
 - Codex usage is read through `codex app-server --listen stdio://`, so the installed Codex CLI must support app-server rate-limit reads.
-- Required command-line tools: `python3`, `curl`, `pgrep`, `ps`, `mkdir`, `rmdir`; plus GNU `stat` on Linux, or `security` on macOS.
+- Required command-line tools on Linux/macOS are `python3`, `curl`, `pgrep`, `ps`, `mkdir`, `rmdir` (plus GNU `stat` on Linux, or `security` on macOS); on Windows they are `python`/`python3`, `curl`, and `tasklist`.
 
 ## Known Limitations
 
@@ -213,11 +266,10 @@ Status display:
 - Codex displays `not running` unless an interactive Codex process is attached to a terminal. Quota data may still be fetchable in the background, but the visible status remains process-aware.
 - Claude usage calls are intentionally cached and retried with backoff to avoid unnecessary API pressure.
 - On macOS, the first time WezTerm reads the Keychain item you may get a one-time "wezterm wants to use your keychain" prompt — choose **Always Allow**.
-- Windows is not a tested target.
 
 ## Troubleshooting
 
-- Claude shows `not running`: confirm `pgrep -x claude` returns a process.
+- Claude shows `not running`: confirm a Claude Code process is running with `pgrep -a -x claude` (Linux) or Task Manager (Windows), excluding the `--chrome-native-host` process.
 - Codex shows `not running`: open Codex in a WezTerm pane and keep that pane alive; detection uses WezTerm pane process info.
 - Codex helper fails in a GUI PATH environment: run `python3 codex-limits.py` directly; the helper auto-discovers common `nvm` installs.
 - Codex helper path resolution fails in a custom environment: set `WEZTERM_AGENT_QUOTA_CODEX_HELPER=/absolute/path/to/codex-limits.py` before launching WezTerm.

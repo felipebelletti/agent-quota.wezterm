@@ -9,6 +9,7 @@ directly to `codex app-server --listen stdio://` using JSON-RPC over JSONL.
 import asyncio
 import json
 import os
+import platform
 import re
 import shutil
 import sys
@@ -38,7 +39,24 @@ def find_codex_executable():
     if resolved:
         return resolved
 
-    home = os.environ.get("HOME") or ""
+    home = os.environ.get("HOME") or os.environ.get("USERPROFILE") or ""
+
+    if platform.system() == "Windows":
+        appdata = os.environ.get("APPDATA") or os.path.join(home, "AppData", "Roaming")
+        local_appdata = os.environ.get("LOCALAPPDATA") or os.path.join(home, "AppData", "Local")
+        fallback_paths = [
+            os.path.join(appdata, "npm", "codex"),
+            os.path.join(appdata, "npm", "codex.cmd"),
+            os.path.join(local_appdata, "Volta", "bin", "codex"),
+            os.path.join(local_appdata, "Volta", "bin", "codex.cmd"),
+            os.path.join(home, ".volta", "bin", "codex"),
+            os.path.join(home, ".volta", "bin", "codex.cmd"),
+        ]
+        for path in fallback_paths:
+            if os.path.isfile(path):
+                return path
+        raise FileNotFoundError("codex not found on PATH")
+
     nvm_matches = glob(os.path.join(home, ".nvm/versions/node/*/bin/codex"))
     if nvm_matches:
         return max(nvm_matches, key=nvm_version_key)
