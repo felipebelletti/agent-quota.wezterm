@@ -789,13 +789,25 @@ local function is_codex_running()
     })
     found = ok and stdout ~= nil and stdout:find('"codex.exe"') ~= nil
   else
-    -- Single ps call; parse in Lua instead of spawning sh + grep + grep
-    local ok, stdout = wezterm.run_child_process({ "ps", "-eo", "comm=,tty=" })
+    -- Single ps call; parse in Lua instead of spawning sh + grep + grep.
+    -- Inspect the full args column because macOS truncates the `comm` column
+    -- for the native Codex binary (e.g. `/Users/.../.n`). Match `codex` as a
+    -- standalone token or path basename, and keep the TTY check so background
+    -- app-server processes do not count.
+    local ok, stdout = wezterm.run_child_process({ "ps", "-axo", "tty=,args=" })
     if ok and stdout then
       for line in stdout:gmatch("[^\n]+") do
-        if line:match("^codex ") and not line:match("%s%?$") then
-          found = true
-          break
+        local tty, args = line:match("^%s*(%S+)%s+(.+)$")
+        if tty and args and not tty:match("^%?") then
+          for token in args:gmatch("%S+") do
+            if token == "codex" or token:match("/codex$") then
+              found = true
+              break
+            end
+          end
+          if found then
+            break
+          end
         end
       end
     end
