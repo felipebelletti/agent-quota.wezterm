@@ -1396,13 +1396,16 @@ function M.status_string(window, pane)
 end
 
 -- ── Bundled brand logos (optional) ──────────────────────────
--- A custom font (fonts/AgentQuotaLogos.otf) carrying the Claude mark at U+E900
--- and the Codex/OpenAI mark at U+E901, so the real logos can be used as segment
+-- A custom font (fonts/AgentQuotaLogos.otf) carrying the Claude mark at U+F8F0
+-- and the Codex/OpenAI mark at U+F8F1, so the real logos can be used as segment
 -- icons. The glyphs are single-color (they take the surrounding text color).
+-- U+E900/U+E901 remain as legacy aliases, but Nerd Fonts claim those codepoints
+-- (dev-cobol / dev-cpanel), so a Nerd Font earlier in the fallback would shadow
+-- them; U+F8F0/U+F8F1 are unclaimed by Nerd Fonts.
 -- Add M.logo_font_dir() to config.font_dirs and M.LOGO_FONT to your font
 -- fallback, then pass M.logo.claude / M.logo.codex as icons.
 M.LOGO_FONT = "Agent Quota Logos"
-M.logo = { claude = utf8.char(0xE900), codex = utf8.char(0xE901) }
+M.logo = { claude = utf8.char(0xF8F0), codex = utf8.char(0xF8F1) }
 function M.logo_font_dir()
   local dir = plugin_dir_from_list()
   return dir and (dir .. "/fonts") or nil

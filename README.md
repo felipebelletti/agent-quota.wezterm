@@ -196,9 +196,11 @@ can be concatenated with other escape-coded content.
 ### Brand logos (optional)
 
 This fork bundles a small font (`fonts/AgentQuotaLogos.otf`) containing the **Claude
-mark** (`U+E900`) and the **Codex/OpenAI mark** (`U+E901`), so you can use the real
+mark** (`U+F8F0`) and the **Codex/OpenAI mark** (`U+F8F1`), so you can use the real
 logos as the segment icons instead of text or Nerd Font glyphs. They are single-color
-glyphs, so they take the surrounding text color.
+glyphs, so they take the surrounding text color. (`U+E900`/`U+E901` still work as
+legacy aliases, but Nerd Fonts claim those codepoints — dev-cobol / dev-cpanel — so a
+Nerd Font earlier in your fallback would shadow them; always prefer `quota.logo.*`.)
 
 ```lua
 local quota = wezterm.plugin.require("https://github.com/felipebelletti/agent-quota.wezterm")
